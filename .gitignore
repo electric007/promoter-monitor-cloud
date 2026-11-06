@@ -1,0 +1,5 @@
+app_cache/
+pit/raw/
+pit/pit_all.csv
+__pycache__/
+*.pyc
