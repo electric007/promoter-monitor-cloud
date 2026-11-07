@@ -8,7 +8,7 @@ const fdShort=iso=>{const p=iso.split('-');return +p[2]+' '+MON[+p[1]-1];};
 const num=(n,d=0)=>Number(n).toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d});
 const sgn=(n,d=0)=>(n>=0?'+':'')+num(n,d)+'%';
 const cssv=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
-let DATA=null,state={filter:'all',sort:'score',q:''},rangeSel='6M';
+let SCAN=null,scanTab='break_',DATA=null,state={filter:'all',sort:'score',q:''},rangeSel='6M';
 const id=r=>r.sym+'-'+r.signal;
 const idx=r=>DATA.stocks.indexOf(r);
 
@@ -17,6 +17,7 @@ async function load(force){
     const r=await fetch('data.json'+(force?'?t='+Date.now():''),{cache:'no-store'});
     if(!r.ok)throw new Error(r.status);
     DATA=await r.json();
+    try{const rs=await fetch('chartscan.json'+(force?'?t='+Date.now():''),{cache:'no-store'});SCAN=rs.ok?await rs.json():null;}catch(e){SCAN=null;}
     try{localStorage.setItem('pm-last',JSON.stringify({g:DATA.generated}));}catch(e){}
   }catch(e){
     $('#view').innerHTML='<p class="empty">Could not load data.json.<br>Check your connection and tap refresh.</p>';
@@ -189,6 +190,47 @@ function track(){
 }
 function statRow(s){return '<div class="stat"><div><b>'+s.n+'</b><span>flags</span></div><div><b>'+num(s.up)+'%</b><span>up since signal</span></div><div><b>'+sgn(s.med,0)+'</b><span>median move</span></div></div>';}
 
+
+/* ---------- chart scan ---------- */
+function spark2(cv,c,mark,color){
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;
+  const x=cv.getContext('2d');x.setTransform(dpr,0,0,dpr,0,0);
+  const lo=Math.min(...c),hi=Math.max(...c),pad=3;
+  const X=i=>pad+(i/(c.length-1))*(w-2*pad),Y=v=>h-pad-((v-lo)/(hi-lo||1))*(h-2*pad);
+  x.lineWidth=1.6;x.strokeStyle=cssv('--muted');x.lineJoin='round';x.beginPath();
+  c.forEach((v,i)=>{i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v));});x.stroke();
+  if(mark!=null&&mark>=0&&mark<c.length){const px=X(mark),py=Y(c[mark]);x.fillStyle=color;x.beginPath();x.moveTo(px,py-5);x.lineTo(px+4,py);x.lineTo(px,py+5);x.lineTo(px-4,py);x.closePath();x.fill();}
+  x.beginPath();x.arc(X(c.length-1),Y(c[c.length-1]),3,0,7);x.fillStyle=cssv('--accent');x.fill();
+}
+function scanCard(r,kind){
+  const tags=[];
+  if(kind==='break_'){tags.push('<span class="st '+r.status.toLowerCase()+'">'+r.status+'</span>','<span>'+num(r.vol_x,1)+'x volume</span>','<span>'+(r.bars===0?'today':r.bars+' bars ago')+'</span>');
+    if(r.bars>0)tags.push('<span>'+r.above+' of '+r.bars+' closes above</span>','<span>worst dip '+sgn(r.dip,1)+'</span>');}
+  else if(kind==='base'){tags.push('<span>range '+num(r.range_x,2)+'x</span>','<span>'+sgn(r.below_pct,1)+' from ceiling</span>');}
+  else{tags.push('<span class="st fresh">New high</span>','<span>'+(r.bars===0?'today':r.bars+' bars ago')+'</span>','<span>'+sgn(r.above_pct,1)+' above old high</span>');}
+  const sub=kind==='break_'?'Broke &#8377;'+num(r.level,1)+' on '+fd(r.date)+' &middot; since '+sgn(r.since,1):kind==='base'?'Ceiling &#8377;'+num(r.ceiling,1)+' &middot; volume '+num(r.vol_x,1)+'x':'Old high &#8377;'+num(r.old_high,1)+' cleared '+fd(r.date);
+  const pb=r.promoter?'<span class="g">Promoter buying '+r.promoter.score+'/6</span>':'';
+  const open=r.promoter?'href="#stock-'+r.promoter.idx+'"':'';
+  return '<a class="card" '+open+'><div class="row"><div><span class="sym">'+esc(r.sym)+'</span><span class="co">'+esc(r.name)+'</span></div><div style="text-align:right"><b>&#8377;'+num(r.close,1)+'</b><div class="'+(r.chg>=0?'pos':'neg')+'" style="font-size:12px">'+sgn(r.chg,1)+' today</div></div></div>'+
+   '<div class="meta">'+sub+'</div><div class="tags">'+tags.join('')+pb+'</div><canvas class="spark" data-s="'+esc(r.sym)+'"></canvas></a>';
+}
+function scanView(){
+  tab('scan');setHead('Chart Scan',false);
+  if(!SCAN){$('#view').innerHTML='<p class="empty">No chart scan data yet.<br>It appears after the next daily run.</p>';return;}
+  const T=SCAN.totals,L=[['break_','Breakouts',T.break_],['base','Base near ceiling',T.base],['ath','New highs',T.ath]];
+  let h='<div class="asof">'+num(SCAN.scanned)+' stocks scanned &middot; prices to '+fd(SCAN.price_asof)+' &middot; updated '+esc(SCAN.generated)+'</div>';
+  h+='<div class="chips">'+L.map(a=>'<button class="chip'+(scanTab===a[0]?' on':'')+'" data-t="'+a[0]+'">'+a[1]+' ('+a[2]+')</button>').join('')+'</div>';
+  const rows=SCAN[scanTab]||[];
+  const info={break_:'A close at a 250-day high on 3x or more volume, inside a year-long range, in the last 20 trading days. <b>Failing</b> means fewer than 80% of closes since have held the old high, or it dipped more than 12%.',base:'A year-long range under 2.2x high to low, with the price within 5% of the top and no breakout yet.',ath:'A close above the all-time high of the stock in the data (4+ years of history) in the last 20 trading days.'}[scanTab];
+  h+='<p class="note" style="margin:0 2px 10px">'+info+' Showing '+rows.length+' of '+L.find(a=>a[0]===scanTab)[2]+'.</p>';
+  h+=rows.length?rows.map(r=>scanCard(r,scanTab)).join(''):'<p class="empty">Nothing right now.</p>';
+  h+='<p class="note">In backtests these chart-only stages did not beat matched random stocks, and breakouts that fail to hold did clearly worse. Use them to build a list to research, not as buy or sell signals. Cards with a green promoter tag open the insider-filing detail.</p>';
+  $('#view').innerHTML=h;
+  document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{scanTab=b.dataset.t;scanView();});
+  document.querySelectorAll('canvas.spark[data-s]').forEach(cv=>{const r=rows.find(x=>x.sym===cv.dataset.s);if(r)spark2(cv,r.spark,r.mark,cssv('--accent'));});
+}
+
 /* ---------- about ---------- */
 function about(){
   tab('about');setHead('About',false);
@@ -205,6 +247,7 @@ function route(){
   const h=location.hash||'#home';
   if(h.startsWith('#stock-'))detail(h.slice(7));
   else if(h==='#track')track();
+  else if(h==='#scan')scanView();
   else if(h==='#about')about();
   else home();
   if(!h.startsWith('#stock-'))window.scrollTo(0,0);
@@ -214,5 +257,5 @@ $('#back').onclick=()=>{location.hash='#home';};
 $('#refresh').onclick=()=>load(true);
 window.addEventListener('resize',()=>{const h=location.hash||'#home';if(DATA&&(h==='#home'||h.startsWith('#stock-')))route();});
 try{if('serviceWorker' in navigator&&!window.__DATA__&&(location.protocol==='https:'||location.hostname==='localhost')){navigator.serviceWorker.register('sw.js').catch(()=>{});}}catch(e){}
-if(window.__DATA__){DATA=window.__DATA__;$('#refresh').style.visibility='hidden';route();}else{load(false);}
+if(window.__DATA__){DATA=window.__DATA__;SCAN=window.__SCAN__||null;$('#refresh').style.visibility='hidden';route();}else{load(false);}
 })();

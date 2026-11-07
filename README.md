@@ -18,3 +18,7 @@ From then on it refreshes itself every evening.
 - GitHub switches off scheduled runs when a repository has had no activity for 60 days. The daily run saves a tracking log, which normally counts. If the schedule stops, open the Actions tab and click Enable.
 - `tracking/flag_log.csv` records every flag so you can see later how they did. Only flags found after setup are a fair test.
 - To change the time, edit the `cron` line in `.github/workflows/daily.yml` (it is in UTC).
+
+## Chart Scan tab
+
+`chart_scan.py` runs in the same daily job. It scans about 1,900 NSE stocks and writes `app/chartscan.json`: breakouts (Fresh, Holding, Failing), bases near their ceiling, and new all-time highs. If the scan fails, the page keeps the last copy. In backtests these chart-only stages did not beat matched random stocks, so treat them as a research list.
